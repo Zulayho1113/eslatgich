@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Eslatgich</title>
+<style>
+/* Layout: one narrow column — today's header, plan composer, preview, upcoming reminders, settings */
+:root {
+  --bg: #F3F5F9; --card: #FFFFFF; --ink: #14233A; --muted: #5E6E85; --line: #DCE2EC;
+  --accent: #F2A922; --accent-ink: #14233A; --danger: #C7412F; --ok: #2E8B57; --soft: #FFF4DC;
+  --font: system-ui, -apple-system, "Roboto", "Segoe UI", sans-serif;
+  --mono: "Roboto Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0E1828; --card: #16233A; --ink: #EAF0F8; --muted: #9FB3CC; --line: #26395A;
+    --accent: #FFC857; --accent-ink: #14233A; --danger: #FF7A66; --ok: #6FD39B; --soft: #2A2A1E; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.badge:empty { display: none; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 16px/1.45 var(--font);
+  padding: 20px max(16px, env(safe-area-inset-left)) 40px max(16px, env(safe-area-inset-right)); }
+main { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+header .day { font-size: 14px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+header h1 { margin: 2px 0 0; font-size: 30px; font-weight: 700; }
+header .clock { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--accent); }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+h2 { margin: 0; font-size: 17px; }
+.hint { color: var(--muted); font-size: 14px; margin: 0; }
+textarea, input[type=text], input[type=password], input[type=time] {
+  width: 100%; font: inherit; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+textarea { min-height: 130px; resize: vertical; }
+textarea:focus, input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { font: inherit; font-weight: 600; border: 0; border-radius: 12px; padding: 13px 16px; cursor: pointer; }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.primary { background: var(--accent); color: var(--accent-ink); width: 100%; font-size: 17px; }
+.primary:disabled { opacity: .55; }
+.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.row > * { flex: 1 1 140px; }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.list li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.list li:first-child { border-top: 0; }
+.t { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; min-width: 64px; }
+.when { font-size: 12px; color: var(--muted); display: block; font-family: var(--font); font-weight: 400; }
+.txt { flex: 1; min-width: 0; word-wrap: break-word; }
+.x { background: transparent; color: var(--danger); padding: 8px 10px; font-size: 20px; line-height: 1; }
+.edit input[type=time] { width: 132px; padding: 8px; flex: none; }
+.edit input[type=text] { padding: 8px 10px; }
+.empty { color: var(--muted); font-size: 15px; padding: 6px 0; }
+.warn { background: var(--soft); border: 1px solid var(--accent); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.warn p { margin: 0; font-size: 14px; }
+.warn button { background: var(--accent); color: var(--accent-ink); padding: 9px 12px; align-self: flex-start; }
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-size: 14px; max-width: 90%; text-align: center; }
+.badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.badge.on { color: var(--ok); border-color: var(--ok); }
+details summary { cursor: pointer; font-weight: 600; }
+details[open] summary { margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="day" id="day"></div>
+    <h1>Eslatgich <span class="clock" id="clock"></span></h1>
+  </header>
+
+  <div id="warns"></div>
+
+  <section aria-labelledby="h-plan">
+    <h2 id="h-plan">Rejangizni yozing</h2>
+    <p class="hint">Oddiy so'zlar bilan yozing. Masalan: <i>ertalab 7 da sport, 9:30 da ishga chiqish, tushdan keyin 3 da uchrashuv, kechqurun 8 da onamga qo'ng'iroq</i></p>
+    <textarea id="plan" placeholder="Bugun nima qilmoqchisiz?"></textarea>
+    <button class="primary" id="btn-parse">Rejani tuzish</button>
+    <p class="hint" id="mode"></p>
+  </section>
+
+  <section id="preview" hidden aria-labelledby="h-prev">
+    <h2 id="h-prev">Tekshirib oling</h2>
+    <p class="hint">Vaqt yoki nomini o'zgartirishingiz mumkin. Keraksizini ✕ bilan o'chiring.</p>
+    <ul class="list edit" id="prev-list"></ul>
+    <button class="primary" id="btn-save">Budilniklarni qo'yish</button>
+  </section>
+
+  <section aria-labelledby="h-up">
+    <div class="row" style="align-items:center"><h2 id="h-up" style="flex:1 1 auto">Navbatdagi eslatmalar</h2><span class="badge" id="count" style="flex:none"></span></div>
+    <ul class="list" id="up-list"></ul>
+  </section>
+
+  <section aria-labelledby="h-set">
+    <details>
+      <summary id="h-set">Sozlamalar</summary>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <p class="hint">AI kaliti (ixtiyoriy). Kalitsiz ham ishlaydi: ilova vaqtlarni o'zi ajratadi. Kalit bilan Claude AI rejangizni aqlliroq tushunadi, hatto vaqt yozmasangiz ham mos vaqt taklif qiladi. Kalitni console.anthropic.com saytidan olasiz (pullik).</p>
+        <input type="password" id="key" placeholder="sk-ant-..." autocomplete="off">
+        <div class="row">
+          <button class="ghost" id="btn-key">Kalitni saqlash</button>
+          <button class="ghost" id="btn-test">Sinov: 5 soniyada jiringlasin</button>
+        </div>
+      </div>
+    </details>
+  </section>
+</main>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function () {
+  // ---- Telefon bilan aloqa (brauzerda sinash uchun soxta variant ham bor) ----
+  var A = window.Android || (function () {
+    var mem = [], k = "";
+    return {
+      getAlarms: function () { return JSON.stringify(mem); },
+      saveAlarms: function (j) { mem = JSON.parse(j); return "ok"; },
+      testRing: function () {}, getApiKey: function () { return k; }, setApiKey: function (v) { k = v; },
+      status: function () { return '{"notif":true,"exact":true,"full":true}'; },
+      openSettings: function () {},
+      askAI: function (id) { setTimeout(function () { window.onAI(id, "", "no_key"); }, 10); }
+    };
+  })();
+
+  var $ = function (id) { return document.getElementById(id); };
+  var OYLAR = ["yanvar","fevral","mart","aprel","may","iyun","iyul","avgust","sentabr","oktabr","noyabr","dekabr"];
+  var KUNLAR = ["Yakshanba","Dushanba","Seshanba","Chorshanba","Payshanba","Juma","Shanba"];
+  var draft = [];
+
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function hhmm(d) { return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+  function sameDay(a, b) { return a.toDateString() === b.toDateString(); }
+  function dayLabel(d) {
+    var now = new Date(), t = new Date(now); t.setDate(now.getDate() + 1);
+    if (sameDay(d, now)) return "bugun";
+    if (sameDay(d, t)) return "ertaga";
+    return d.getDate() + "-" + OYLAR[d.getMonth()];
+  }
+  function toast(msg) {
+    var t = $("toast"); t.textContent = msg; t.hidden = false;
+    clearTimeout(toast.h); toast.h = setTimeout(function () { t.hidden = true; }, 2600);
+  }
+
+  function tick() {
+    var n = new Date();
+    $("day").textContent = KUNLAR[n.getDay()] + ", " + n.getDate() + "-" + OYLAR[n.getMonth()];
+    $("clock").textContent = hhmm(n);
+  }
+
+  // ---- Matndan vaqtlarni ajratish (AI kalitsiz ishlaydi) ----
+  function parsePlan(text, now) {
+    now = now || new Date();
+    var chunks = text.split(/\n|;|,|\.\s+|\bkeyin esa\b|\bso'ng\b|\bundan keyin\b/i)
+      .map(function (s) { return s.trim(); }).filter(Boolean);
+    var out = [];
+    chunks.forEach(function (c) {
+      var low = c.toLowerCase().replace(/[‘’ʻʼ`]/g, "'");
+      var h = null, m = 0, mm;
+      if ((mm = low.match(/(\d{1,2})\s*[:.]\s*(\d{2})/))) { h = +mm[1]; m = +mm[2]; }
+      else if ((mm = low.match(/(?:soat\s*)?(\d{1,2})\s*(?:-?\s*)?yarim/))) { h = +mm[1]; m = 30; }
+      else if ((mm = low.match(/soat\s*(\d{1,2})/))) { h = +mm[1]; }
+      else if ((mm = low.match(/(\d{1,2})\s*(?:-?\s*(?:da|ga|larda|lar))\b/))) { h = +mm[1]; }
+      else if ((mm = low.match(/\b(\d{1,2})\b/))) { h = +mm[1]; }
+
+      var pm = /tushdan keyin|kechqurun|kechki|kechda|\bkech\b|oqshom|peshindan keyin/.test(low);
+      var night = /kechasi|tunda|tungi/.test(low);
+      var noon = /tushlik|tushda|peshin|kunduzi/.test(low);
+      if (h !== null) {
+        if (pm && h < 12) h += 12;
+        else if (night && h >= 7 && h < 12) h += 12;
+        else if (noon && h < 6) h += 12;
+        if (h > 23 || m > 59) h = null;
+      }
+      var tomorrow = /ertaga/.test(low);
+      var name = c
+        .replace(/\d{1,2}\s*[:.]\s*\d{2}/g, "")
+        .replace(/(?:soat\s*)?\d{1,2}\s*-?\s*yarim\s*(?:da|ga)?/gi, "")
+        .replace(/soat\s*\d{1,2}\s*(?:da|ga)?/gi, "")
+        .replace(/\b\d{1,2}\s*-?\s*(?:da|ga|larda|lar)\b/gi, "")
+        .replace(/\b\d{1,2}\b/g, "")
+        .replace(/\b(ertaga|bugun|ertalab|tongda|tushdan keyin|peshindan keyin|kechqurun|kechki|kechasi|tunda|tushda|kunduzi|soat|da|ga|va|keyin)\b/gi, " ")
+        .replace(/\s+/g, " ").replace(/^[\s\-–:]+|[\s\-–:]+$/g, "").trim();
+      if (!name) name = c.trim();
+      name = name.charAt(0).toUpperCase() + name.slice(1);
+
+      var d = null;
+      if (h !== null) {
+        d = new Date(now); d.setSeconds(0, 0); d.setHours(h, m);
+        if (tomorrow) d.setDate(d.getDate() + 1);
+        else if (d <= now) d.setDate(d.getDate() + 1);
+      }
+      out.push({ at: d ? d.getTime() : null, text: name });
+    });
+    return out;
+  }
+  window.__parsePlan = parsePlan;
+
+  // ---- AI orqali ----
+  var aiWait = {};
+  window.onAI = function (id, text, err) { var f = aiWait[id]; delete aiWait[id]; if (f) f(text, err); };
+  function askAI(plan) {
+    return new Promise(function (resolve) {
+      var id = "r" + Date.now();
+      aiWait[id] = function (text, err) { resolve({ text: text, err: err }); };
+      var n = new Date();
+      var today = n.getFullYear() + "-" + pad(n.getMonth() + 1) + "-" + pad(n.getDate());
+      var sys = "Siz shaxsiy rejalashtiruvchi yordamchisiz. Foydalanuvchi o'zbek tilida (ba'zan rus yoki ingliz tilida) kunlik rejasini yozadi. " +
+        "Hozir: " + today + " " + hhmm(n) + " (" + KUNLAR[n.getDay()] + "). " +
+        "Har bir ishni alohida eslatmaga ajrating. 'kechqurun 7' = 19:00, 'tushdan keyin 3' = 15:00. " +
+        "Vaqt aytilmagan ish uchun mantiqiy vaqt taklif qiling. O'tib ketgan vaqtlar uchun ertangi sanani qo'ying, agar foydalanuvchi boshqacha demagan bo'lsa. " +
+        "Eslatma nomi qisqa va aniq bo'lsin, foydalanuvchi tilida. " +
+        "FAQAT JSON massiv qaytaring, boshqa hech narsa yozmang: [{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\",\"text\":\"...\"}]";
+      A.askAI(id, sys, plan);
+    });
+  }
+  function fromAI(text) {
+    var s = text.indexOf("["), e = text.lastIndexOf("]");
+    if (s < 0 || e < s) return null;
+    try {
+      var arr = JSON.parse(text.slice(s, e + 1));
+      return arr.map(function (o) {
+        var p = String(o.date || "").split("-"), t = String(o.time || "").split(":");
+        var d = new Date(+p[0], +p[1] - 1, +p[2], +t[0], +t[1] || 0, 0, 0);
+        return { at: isNaN(d.getTime()) ? null : d.getTime(), text: String(o.text || "Eslatma") };
+      });
+    } catch (x) { return null; }
+  }
+
+  // ---- Ko'rinish ----
+  function renderPreview() {
+    var ul = $("prev-list"); ul.innerHTML = "";
+    $("preview").hidden = draft.length === 0;
+    draft.forEach(function (it, i) {
+      var li = document.createElement("li");
+      var tm = document.createElement("input"); tm.type = "time"; tm.id = "pt" + i;
+      tm.setAttribute("aria-label", "Vaqt");
+      if (it.at) tm.value = hhmm(new Date(it.at));
+      tm.onchange = function () {
+        var v = tm.value.split(":"); if (v.length < 2) return;
+        var base = it.at ? new Date(it.at) : new Date();
+        base.setHours(+v[0], +v[1], 0, 0);
+        if (!it.at && base <= new Date()) base.setDate(base.getDate() + 1);
+        it.at = base.getTime(); renderPreview();
+      };
+      var wrap = document.createElement("div"); wrap.className = "txt";
+      var tx = document.createElement("input"); tx.type = "text"; tx.id = "px" + i; tx.value = it.text;
+      tx.setAttribute("aria-label", "Ish nomi");
+      tx.oninput = function () { it.text = tx.value; };
+      var w = document.createElement("span"); w.className = "when";
+      w.textContent = it.at ? dayLabel(new Date(it.at)) : "vaqtni tanlang";
+      wrap.appendChild(tx); wrap.appendChild(w);
+      var del = document.createElement("button"); del.className = "x"; del.textContent = "✕";
+      del.setAttribute("aria-label", "O'chirish");
+      del.onclick = function () { draft.splice(i, 1); renderPreview(); };
+      li.appendChild(tm); li.appendChild(wrap); li.appendChild(del);
+      ul.appendChild(li);
+    });
+  }
+
+  function getAlarms() {
+    try { return JSON.parse(A.getAlarms()) || []; } catch (x) { return []; }
+  }
+  function renderUpcoming() {
+    var now = Date.now();
+    var list = getAlarms().filter(function (a) { return a.at > now && a.id !== 999999; })
+      .sort(function (a, b) { return a.at - b.at; });
+    var ul = $("up-list"); ul.innerHTML = "";
+    $("count").textContent = list.length ? list.length + " ta" : "";
+    if (!list.length) {
+      var li = document.createElement("li"); li.className = "empty";
+      li.textContent = "Hozircha eslatma yo'q. Yuqoriga rejangizni yozing.";
+      ul.appendChild(li); return;
+    }
+    list.forEach(function (a) {
+      var li = document.createElement("li"), d = new Date(a.at);
+      var t = document.createElement("div"); t.className = "t"; t.textContent = hhmm(d);
+      var w = document.createElement("span"); w.className = "when"; w.textContent = dayLabel(d); t.appendChild(w);
+      var tx = document.createElement("div"); tx.className = "txt"; tx.textContent = a.text;
+      var del = document.createElement("button"); del.className = "x"; del.textContent = "✕";
+      del.setAttribute("aria-label", "Eslatmani o'chirish");
+      del.onclick = function () {
+        var rest = getAlarms().filter(function (b) { return b.id !== a.id; });
+        A.saveAlarms(JSON.stringify(rest)); renderUpcoming(); toast("O'chirildi");
+      };
+      li.appendChild(t); li.appendChild(tx); li.appendChild(del); ul.appendChild(li);
+    });
+  }
+
+  function renderWarns() {
+    var s = {}; try { s = JSON.parse(A.status()); } catch (x) {}
+    var box = $("warns"); box.innerHTML = "";
+    var items = [];
+    if (s.notif === false) items.push(["notif", "Bildirishnomalar o'chiq. Ularsiz ilova jiringlay olmaydi."]);
+    if (s.exact === false) items.push(["exact", "Aniq vaqtda budilnik qo'yishga ruxsat bering, aks holda eslatma kechikishi mumkin."]);
+    if (s.full === false) items.push(["full", "Qulflangan ekranda katta oyna chiqishi uchun «to'liq ekran» ruxsatini yoqing."]);
+    items.forEach(function (it) {
+      var d = document.createElement("div"); d.className = "warn";
+      var p = document.createElement("p"); p.textContent = it[1];
+      var b = document.createElement("button"); b.textContent = "Ruxsat berish";
+      b.onclick = function () { A.openSettings(it[0]); };
+      d.appendChild(p); d.appendChild(b); box.appendChild(d);
+    });
+  }
+
+  function renderMode() {
+    var k = ""; try { k = A.getApiKey(); } catch (x) {}
+    $("mode").textContent = k ? "AI yoqilgan: rejangizni Claude tushunadi." : "AI kaliti kiritilmagan: vaqtlar matndan avtomatik ajratiladi.";
+    $("key").value = k ? "••••••••" + k.slice(-4) : "";
+  }
+
+  window.refresh = function () { renderWarns(); renderUpcoming(); renderMode(); tick(); };
+
+  // ---- Tugmalar ----
+  $("btn-parse").onclick = async function () {
+    var plan = $("plan").value.trim();
+    if (!plan) { toast("Avval rejangizni yozing"); return; }
+    var btn = this; btn.disabled = true; btn.textContent = "Tushunyapman…";
+    var items = null, note = "";
+    var k = ""; try { k = A.getApiKey(); } catch (x) {}
+    if (k) {
+      var r = await askAI(plan);
+      if (!r.err) items = fromAI(r.text);
+      if (!items) note = r.err && r.err.indexOf("http_401") === 0 ? "AI kaliti noto'g'ri. " : "AI javob bermadi. ";
+    }
+    if (!items) items = parsePlan(plan);
+    draft = items;
+    renderPreview();
+    btn.disabled = false; btn.textContent = "Rejani tuzish";
+    var noTime = draft.filter(function (d) { return !d.at; }).length;
+    if (note) toast(note + "Matndan o'zim ajratdim.");
+    else if (noTime) toast(noTime + " ta ish uchun vaqtni tanlang");
+    $("preview").scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  $("btn-save").onclick = function () {
+    var ready = draft.filter(function (d) { return d.at && d.at > Date.now() && d.text.trim(); });
+    if (!ready.length) { toast("Kamida bitta ishga vaqt tanlang"); return; }
+    var all = getAlarms().filter(function (a) { return a.at > Date.now(); });
+    var base = Math.floor(Date.now() / 1000) % 100000000;
+    ready.forEach(function (d, i) { all.push({ id: base + i, at: d.at, text: d.text.trim() }); });
+    var res = A.saveAlarms(JSON.stringify(all));
+    if (res !== "ok") { toast("Saqlab bo'lmadi: " + res); return; }
+    var skipped = draft.length - ready.length;
+    draft = []; renderPreview(); $("plan").value = "";
+    try { localStorage.removeItem("draft"); } catch (x) {}
+    renderUpcoming();
+    toast(ready.length + " ta budilnik qo'yildi" + (skipped ? " (" + skipped + " tasi vaqtsiz qoldi)" : ""));
+  };
+
+  $("btn-key").onclick = function () {
+    var v = $("key").value.trim();
+    if (v.indexOf("••••") === 0) { toast("Kalit allaqachon saqlangan"); return; }
+    A.setApiKey(v); renderMode(); toast(v ? "Kalit saqlandi" : "Kalit o'chirildi");
+  };
+  $("btn-test").onclick = function () { A.testRing(); toast("5 soniyadan keyin jiringlaydi"); };
+
+  try { $("plan").value = localStorage.getItem("draft") || ""; } catch (x) {}
+  $("plan").addEventListener("input", function () { try { localStorage.setItem("draft", $("plan").value); } catch (x) {} });
+
+  setInterval(function () { tick(); }, 15000);
+  window.refresh();
+})();
+</script>
+</body>
+</html>
