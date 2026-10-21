@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.speech.SpeechRecognizer;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -19,13 +20,8 @@ import android.webkit.WebViewClient;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Asosiy oyna: reja yoziladigan sahifa (assets/index.html) va uning telefon bilan aloqasi. */
 public class MainActivity extends Activity {
@@ -46,10 +42,15 @@ public class MainActivity extends Activity {
         web.loadUrl("file:///android_asset/index.html");
         setContentView(web);
 
+        List<String> ask = new ArrayList<>();
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+            ask.add(Manifest.permission.POST_NOTIFICATIONS);
         }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            ask.add(Manifest.permission.RECORD_AUDIO);
+        }
+        if (!ask.isEmpty()) requestPermissions(ask.toArray(new String[0]), 1);
     }
 
     @Override
@@ -101,14 +102,37 @@ public class MainActivity extends Activity {
             }
         }
 
-        @JavascriptInterface
-        public void testRing() {
-            int id = 999999;
+        private void testAlarm(int id, String text) {
             long at = System.currentTimeMillis() + 5000;
             Scheduler.cancel(MainActivity.this, id);
             Store.remove(MainActivity.this, id);
-            Store.add(MainActivity.this, id, at, "Sinov: budilnik ishlayapti!");
-            Scheduler.schedule(MainActivity.this, id, at, "Sinov: budilnik ishlayapti!");
+            Store.add(MainActivity.this, id, at, text);
+            Scheduler.schedule(MainActivity.this, id, at, text);
+        }
+
+        @JavascriptInterface
+        public void testRing() {
+            testAlarm(999999, "Sinov: budilnik ishlayapti!");
+        }
+
+        @JavascriptInterface
+        public void testSpeak() {
+            testAlarm(AlarmReceiver.TEST_SPEAK_ID, "Sinov: ingliz tili mashqi");
+        }
+
+        @JavascriptInterface
+        public boolean getSpeakOn() {
+            return Store.isSpeakOn(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public void setSpeakOn(boolean on) {
+            Store.setSpeakOn(MainActivity.this, on);
+        }
+
+        @JavascriptInterface
+        public String getReports() {
+            return Store.getReports(MainActivity.this).toString();
         }
 
         @JavascriptInterface
@@ -121,7 +145,7 @@ public class MainActivity extends Activity {
             Store.setApiKey(MainActivity.this, key);
         }
 
-        /** Ruxsatlar holati: bildirishnoma, aniq vaqt, to'liq ekran. */
+        /** Ruxsatlar holati: bildirishnoma, aniq vaqt, to'liq ekran, mikrofon, nutqni tanish. */
         @JavascriptInterface
         public String status() {
             JSONObject o = new JSONObject();
@@ -136,6 +160,8 @@ public class MainActivity extends Activity {
                 o.put("notif", notif);
                 o.put("exact", exact);
                 o.put("full", full);
+                o.put("mic", checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED);
+                o.put("speech", SpeechRecognizer.isRecognitionAvailable(MainActivity.this));
             } catch (Exception ignored) {
             }
             return o.toString();
@@ -145,8 +171,23 @@ public class MainActivity extends Activity {
         public void openSettings(String kind) {
             runOnUiThread(() -> {
                 try {
-                    Intent i;
                     Uri pkg = Uri.parse("package:" + getPackageName());
+                    if ("mic".equals(kind)) {
+                        if (shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+                                || !getSharedPreferences("eslatgich", MODE_PRIVATE).getBoolean("micAsked", false)) {
+                            getSharedPreferences("eslatgich", MODE_PRIVATE).edit().putBoolean("micAsked", true).apply();
+                            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 2);
+                            return;
+                        }
+                        startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg));
+                        return;
+                    }
+                    if ("speech".equals(kind)) {
+                        startActivity(new Intent(Intent.ACTION_VIEW,
+                                Uri.parse("market://details?id=com.google.android.googlequicksearchbox")));
+                        return;
+                    }
+                    Intent i;
                     if ("exact".equals(kind) && Build.VERSION.SDK_INT >= 31) {
                         i = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, pkg);
                     } else if ("full".equals(kind) && Build.VERSION.SDK_INT >= 34) {
@@ -168,65 +209,7 @@ public class MainActivity extends Activity {
         /** AI'ga savol yuboradi. Javob window.onAI(reqId, matn, xato) orqali qaytadi. */
         @JavascriptInterface
         public void askAI(final String reqId, final String system, final String user) {
-            final String key = Store.getApiKey(MainActivity.this);
-            new Thread(() -> {
-                if (key.isEmpty()) {
-                    sendToPage("onAI", reqId, "", "no_key");
-                    return;
-                }
-                HttpURLConnection con = null;
-                try {
-                    JSONObject body = new JSONObject();
-                    body.put("model", "claude-haiku-5-5");
-                    body.put("max_tokens", 1500);
-                    body.put("system", system);
-                    JSONArray msgs = new JSONArray();
-                    JSONObject m = new JSONObject();
-                    m.put("role", "user");
-                    m.put("content", user);
-                    msgs.put(m);
-                    body.put("messages", msgs);
-
-                    con = (HttpURLConnection) new URL("https://api.anthropic.com/v1/messages").openConnection();
-                    con.setRequestMethod("POST");
-                    con.setConnectTimeout(20000);
-                    con.setReadTimeout(60000);
-                    con.setDoOutput(true);
-                    con.setRequestProperty("content-type", "application/json");
-                    con.setRequestProperty("x-api-key", key);
-                    con.setRequestProperty("anthropic-version", "2023-06-01");
-                    try (OutputStream os = con.getOutputStream()) {
-                        os.write(body.toString().getBytes(StandardCharsets.UTF_8));
-                    }
-                    int code = con.getResponseCode();
-                    InputStream is = code >= 200 && code < 300 ? con.getInputStream() : con.getErrorStream();
-                    StringBuilder sb = new StringBuilder();
-                    if (is != null) {
-                        try (BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-                            String line;
-                            while ((line = r.readLine()) != null) sb.append(line).append('\n');
-                        }
-                    }
-                    if (code < 200 || code >= 300) {
-                        sendToPage("onAI", reqId, "", "http_" + code + ": " + sb);
-                        return;
-                    }
-                    JSONObject res = new JSONObject(sb.toString());
-                    JSONArray content = res.optJSONArray("content");
-                    StringBuilder text = new StringBuilder();
-                    if (content != null) {
-                        for (int i = 0; i < content.length(); i++) {
-                            JSONObject part = content.optJSONObject(i);
-                            if (part != null && "text".equals(part.optString("type"))) text.append(part.optString("text"));
-                        }
-                    }
-                    sendToPage("onAI", reqId, text.toString(), "");
-                } catch (Exception e) {
-                    sendToPage("onAI", reqId, "", "net: " + e.getMessage());
-                } finally {
-                    if (con != null) con.disconnect();
-                }
-            }).start();
+            Ai.ask(MainActivity.this, system, user, 1500, (text, err) -> sendToPage("onAI", reqId, text, err));
         }
     }
 }

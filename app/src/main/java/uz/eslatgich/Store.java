@@ -54,6 +54,46 @@ public final class Store {
         setAlarms(c, arr);
     }
 
+    public static boolean isSpeakOn(Context c) {
+        return prefs(c).getBoolean("speakOn", true);
+    }
+
+    public static void setSpeakOn(Context c, boolean on) {
+        prefs(c).edit().putBoolean("speakOn", on).apply();
+    }
+
+    /** Ingliz tili mashqlari tarixi (oxirgi 60 tasi, eng yangisi oxirida). */
+    public static synchronized JSONArray getReports(Context c) {
+        try {
+            return new JSONArray(prefs(c).getString("reports", "[]"));
+        } catch (JSONException e) {
+            return new JSONArray();
+        }
+    }
+
+    public static synchronized void addReport(Context c, JSONObject r) {
+        JSONArray arr = getReports(c);
+        arr.put(r);
+        JSONArray out = new JSONArray();
+        for (int i = Math.max(0, arr.length() - 60); i < arr.length(); i++) out.put(arr.opt(i));
+        prefs(c).edit().putString("reports", out.toString()).apply();
+    }
+
+    /** Mavjud hisobotni (masalan, AI bahosi kelganda) yangilaydi. */
+    public static synchronized void updateReport(Context c, long time, String key, Object value) {
+        JSONArray arr = getReports(c);
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject o = arr.optJSONObject(i);
+            if (o != null && o.optLong("time") == time) {
+                try {
+                    o.put(key, value);
+                } catch (JSONException ignored) {
+                }
+            }
+        }
+        prefs(c).edit().putString("reports", arr.toString()).apply();
+    }
+
     public static String getApiKey(Context c) {
         return prefs(c).getString(KEY_API, "");
     }

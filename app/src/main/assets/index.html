@@ -19,6 +19,16 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 .badge:empty { display: none; }
+.tag { font-size: 11px; color: var(--accent-ink); background: var(--accent); border-radius: 999px; padding: 1px 7px; margin-left: 6px; font-weight: 600; white-space: nowrap; }
+.switch { display: flex; gap: 12px; align-items: flex-start; }
+.switch input { width: 22px; height: 22px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+.rep { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.rep:first-of-type { border-top: 0; padding-top: 0; }
+.rep .top { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--muted); }
+.rep .topic { font-weight: 600; }
+.rep .nums { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rep .score { font-weight: 700; color: var(--ink); }
+.rep pre { white-space: pre-wrap; font: 14px/1.5 var(--font); margin: 0; background: var(--bg); border-radius: 10px; padding: 10px; }
 html, body { margin: 0; }
 body { background: var(--bg); color: var(--ink); font: 16px/1.45 var(--font);
   padding: 20px max(16px, env(safe-area-inset-left)) 40px max(16px, env(safe-area-inset-right)); }
@@ -91,6 +101,16 @@ details[open] summary { margin-bottom: 10px; }
     <ul class="list" id="up-list"></ul>
   </section>
 
+  <section aria-labelledby="h-en">
+    <h2 id="h-en">Ertalabki ingliz tili</h2>
+    <label class="switch" for="speak-on">
+      <input type="checkbox" id="speak-on">
+      <span>Ertalabki budilniklar (04:00–12:00) faqat <b>5 daqiqa ingliz tilida gapirganimdan</b> keyin o'chsin. Keyin nutqim baholansin.</span>
+    </label>
+    <button class="ghost" id="btn-test-speak">Sinab ko'rish: 30 soniyalik mashq</button>
+    <div id="reports"></div>
+  </section>
+
   <section aria-labelledby="h-set">
     <details>
       <summary id="h-set">Sozlamalar</summary>
@@ -117,7 +137,9 @@ details[open] summary { margin-bottom: 10px; }
       saveAlarms: function (j) { mem = JSON.parse(j); return "ok"; },
       testRing: function () {}, getApiKey: function () { return k; }, setApiKey: function (v) { k = v; },
       status: function () { return '{"notif":true,"exact":true,"full":true}'; },
-      openSettings: function () {},
+      openSettings: function () {}, getSpeakOn: function () { return true; }, setSpeakOn: function () {},
+      testSpeak: function () {},
+      getReports: function () { return JSON.stringify([{time: Date.now() - 3600e3, topic: "Describe your morning routine.", words: 312, wpm: 64, unique: 141, fillers: 3, transcript: "Every morning I wake up at seven o'clock.", feedback: "BAHO: 7/10 (taxminiy daraja: B1)\nYaxshi tomonlar: Fikrlaringiz tartibli."}]); },
       askAI: function (id) { setTimeout(function () { window.onAI(id, "", "no_key"); }, 10); }
     };
   })();
@@ -276,6 +298,9 @@ details[open] summary { margin-bottom: 10px; }
       var t = document.createElement("div"); t.className = "t"; t.textContent = hhmm(d);
       var w = document.createElement("span"); w.className = "when"; w.textContent = dayLabel(d); t.appendChild(w);
       var tx = document.createElement("div"); tx.className = "txt"; tx.textContent = a.text;
+      if (speakOn() && d.getHours() >= 4 && d.getHours() < 12) {
+        var tg = document.createElement("span"); tg.className = "tag"; tg.textContent = "🗣 inglizcha"; tx.appendChild(tg);
+      }
       var del = document.createElement("button"); del.className = "x"; del.textContent = "✕";
       del.setAttribute("aria-label", "Eslatmani o'chirish");
       del.onclick = function () {
@@ -292,6 +317,8 @@ details[open] summary { margin-bottom: 10px; }
     var items = [];
     if (s.notif === false) items.push(["notif", "Bildirishnomalar o'chiq. Ularsiz ilova jiringlay olmaydi."]);
     if (s.exact === false) items.push(["exact", "Aniq vaqtda budilnik qo'yishga ruxsat bering, aks holda eslatma kechikishi mumkin."]);
+    if (s.mic === false) items.push(["mic", "Ertalabki inglizcha mashq uchun mikrofonga ruxsat bering. Ruxsatsiz ertalabki budilnik oddiy jiringlaydi."]);
+    if (s.speech === false) items.push(["speech", "Telefoningizda nutqni tanish xizmati topilmadi. «Google» ilovasini o'rnating yoki yangilang."]);
     if (s.full === false) items.push(["full", "Qulflangan ekranda katta oyna chiqishi uchun «to'liq ekran» ruxsatini yoqing."]);
     items.forEach(function (it) {
       var d = document.createElement("div"); d.className = "warn";
@@ -308,7 +335,43 @@ details[open] summary { margin-bottom: 10px; }
     $("key").value = k ? "••••••••" + k.slice(-4) : "";
   }
 
-  window.refresh = function () { renderWarns(); renderUpcoming(); renderMode(); tick(); };
+  function speakOn() { try { return !!A.getSpeakOn(); } catch (x) { return true; } }
+
+  function renderReports() {
+    var box = $("reports"); box.innerHTML = "";
+    var list = []; try { list = JSON.parse(A.getReports()) || []; } catch (x) {}
+    if (!list.length) {
+      var p = document.createElement("p"); p.className = "hint";
+      p.textContent = "Mashqlar tarixi shu yerda chiqadi: mavzu, so'zlar soni, tezlik va AI bahosi.";
+      box.appendChild(p); return;
+    }
+    list.slice(-7).reverse().forEach(function (r, i) {
+      var d = new Date(r.time);
+      var el = document.createElement("div"); el.className = "rep";
+      var top = document.createElement("div"); top.className = "top";
+      var a = document.createElement("span"); a.textContent = dayLabel(d) + ", " + hhmm(d);
+      var sc = document.createElement("span"); sc.className = "score";
+      var m = (r.feedback || "").match(/BAHO:\s*([\d.,]+\s*\/\s*10)/i); sc.textContent = m ? m[1].replace(/\s/g, "") : "";
+      top.appendChild(a); top.appendChild(sc);
+      var t = document.createElement("div"); t.className = "topic"; t.textContent = r.topic;
+      var n = document.createElement("div"); n.className = "nums";
+      n.textContent = r.words + " so'z · daqiqasiga " + r.wpm + " · " + r.unique + " xil so'z · " + r.fillers + " to'ldiruvchi";
+      el.appendChild(top); el.appendChild(t); el.appendChild(n);
+      if (r.feedback || r.transcript) {
+        var det = document.createElement("details"); if (i === 0) det.open = !!r.feedback;
+        var sm = document.createElement("summary"); sm.textContent = r.feedback ? "AI bahosi va matn" : "Aytganlaringiz";
+        var pre = document.createElement("pre");
+        pre.textContent = (r.feedback ? r.feedback + "\n\n" : "") + "Siz aytdingiz:\n" + (r.transcript || "");
+        det.appendChild(sm); det.appendChild(pre); el.appendChild(det);
+      }
+      box.appendChild(el);
+    });
+  }
+
+  window.refresh = function () {
+    renderWarns(); renderUpcoming(); renderMode(); renderReports(); tick();
+    $("speak-on").checked = speakOn();
+  };
 
   // ---- Tugmalar ----
   $("btn-parse").onclick = async function () {
@@ -352,6 +415,12 @@ details[open] summary { margin-bottom: 10px; }
     if (v.indexOf("••••") === 0) { toast("Kalit allaqachon saqlangan"); return; }
     A.setApiKey(v); renderMode(); toast(v ? "Kalit saqlandi" : "Kalit o'chirildi");
   };
+  $("speak-on").onchange = function () {
+    try { A.setSpeakOn(this.checked); } catch (x) {}
+    renderUpcoming();
+    toast(this.checked ? "Ertalabki inglizcha mashq yoqildi" : "Ertalabki budilniklar oddiy jiringlaydi");
+  };
+  $("btn-test-speak").onclick = function () { A.testSpeak(); toast("5 soniyadan keyin jiringlaydi. Telefonni qulflashingiz mumkin"); };
   $("btn-test").onclick = function () { A.testRing(); toast("5 soniyadan keyin jiringlaydi"); };
 
   try { $("plan").value = localStorage.getItem("draft") || ""; } catch (x) {}

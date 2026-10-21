@@ -32,8 +32,23 @@ public class AlarmReceiver extends BroadcastReceiver {
             snooze(c, id, text);
         } else if (ACTION_FIRE.equals(action)) {
             Store.remove(c, id);
-            ring(c, id, text);
+            ring(c, id, text, speakSecondsFor(c, id));
         }
+    }
+
+    public static final int TEST_SPEAK_ID = 999998;
+    public static final int MORNING_SPEAK_SECONDS = 300;
+
+    /** Ertalabki (04:00–11:59) budilnik bo'lsa, necha soniya inglizcha gapirish kerakligini qaytaradi; 0 = oddiy budilnik. */
+    static int speakSecondsFor(Context c, int id) {
+        if (id == TEST_SPEAK_ID) return 30;
+        if (!Store.isSpeakOn(c)) return 0;
+        int h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        return (h >= 4 && h < 12) ? MORNING_SPEAK_SECONDS : 0;
+    }
+
+    static void ring(Context c, int id, String text) {
+        ring(c, id, text, 0);
     }
 
     public static void stop(Context c, int id) {
@@ -78,7 +93,7 @@ public class AlarmReceiver extends BroadcastReceiver {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
-    static void ring(Context c, int id, String text) {
+    static void ring(Context c, int id, String text, int speakSecs) {
         ensureChannel(c);
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
@@ -87,23 +102,29 @@ public class AlarmReceiver extends BroadcastReceiver {
         ringIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         ringIntent.putExtra("id", id);
         ringIntent.putExtra("text", text);
+        ringIntent.putExtra("speakSecs", speakSecs);
         PendingIntent full = PendingIntent.getActivity(c, id, ringIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         Notification.Builder b = new Notification.Builder(c, CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-                .setContentTitle("⏰ Vaqti bo'ldi!")
+                .setContentTitle(speakSecs > 0 ? "☀️ Xayrli tong! Inglizcha gapiring" : "⏰ Vaqti bo'ldi!")
                 .setContentText(text)
                 .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setContentIntent(full)
-                .setFullScreenIntent(full, true)
-                .setDeleteIntent(actionPending(c, ACTION_STOP, id, text, id + 300000))
+                .setFullScreenIntent(full, true);
+        if (speakSecs > 0) {
+            // Ertalabki budilnikni faqat inglizcha gapirib o'chirish mumkin.
+            b.setOngoing(true);
+        } else {
+            b.setDeleteIntent(actionPending(c, ACTION_STOP, id, text, id + 300000))
                 .addAction(new Notification.Action.Builder(null, "To'xtatish",
                         actionPending(c, ACTION_STOP, id, text, id + 100000)).build())
                 .addAction(new Notification.Action.Builder(null, SNOOZE_MINUTES + " daqiqa keyin",
                         actionPending(c, ACTION_SNOOZE, id, text, id + 200000)).build());
+        }
 
         Notification n = b.build();
         n.flags |= Notification.FLAG_INSISTENT; // to'xtatmaguningizcha jiringlayveradi
